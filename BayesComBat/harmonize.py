@@ -21,7 +21,6 @@ print('devices', jax.devices())
 
 def infer(df, features, covariates, batch_var, subject_var, outdir):
     """Learns the ComBat model
-
     Arguments:
         df: pandas dataframe with all data (unharmonized imaging features, covariates, scanner indicators)
         features: list of feature names corresponding to df columns
@@ -158,14 +157,14 @@ def infer(df, features, covariates, batch_var, subject_var, outdir):
     mcmc.warmup(rng_key_, X_df = df[covariates], i = df[batch_var], j = df[subject_var], y_df = df[features], collect_warmup=True)
     # warmup_samples=mcmc.get_samples(group_by_chain=True)
 
-    with open(os.path.join(out_dir,"mcmc_warmup.pickle"),"wb"):
+    with open(os.path.join(outdir,"mcmc_warmup.pickle"),"wb") as f:
         pickle.dump(mcmc, f, protocol = 4)
 
     mcmc.thinning=1
     mcmc.run(rng_key_, X_df = df[covariates], i = df[batch_var], j = df[subject_var], y_df = df[features])
 
     try:
-        with open(os.path.join(out_dir, 'mcmc_{}.pickle'.format("0")),"wb") as f:
+        with open(os.path.join(outdir, 'mcmc_{}.pickle'.format("0")),"wb") as f:
             pickle.dump(mcmc, f, protocol = 4)
     except:
         print('couldnt write mcmc object')
@@ -174,7 +173,7 @@ def infer(df, features, covariates, batch_var, subject_var, outdir):
         mcmc.post_warmup_state = mcmc.last_state
         mcmc.run(mcmc.post_warmup_state.rng_key, X_df = df[covariates], i = df[batch_var], j = df[subject_var], y_df = df[features])
         try:
-            with open(os.path.join(out_dir, 'mcmc_{}.pickle'.format(i)),"wb") as f:
+            with open(os.path.join(outdir, 'mcmc_{}.pickle'.format(i)),"wb") as f:
                 pickle.dump(mcmc, f, protocol = 4)
         except:
             print('couldnt write mcmc object')
@@ -184,15 +183,14 @@ def infer(df, features, covariates, batch_var, subject_var, outdir):
 
 
 
-def harmonize(df, features, covariates,batch_var, subject, outdir):
+def harmonize(df, features, covariates,batch_var, subject_var, outdir):
     """ Does haronization using pickle files created by infer
-
     Arguments:
         df: pandas dataframe with all data (unharmonized imaging features, covariates, scanner indicators).
         features: list of feature names corresponding to df columns
         covariates: list of covariates corresponding to df columns. If categorical (i.e. Male/Female), please convert to int or float first
         batch_var: string column name corresponding to the scanner/site to harmonize
-        subject: string column name corresponding to the subject identifier
+        subject_var: string column name corresponding to the subject identifier
         outdir: directory to save pickle files to
     """
 
@@ -304,7 +302,7 @@ def harmonize(df, features, covariates,batch_var, subject, outdir):
 
     experiment_paths={
         'current':outdir}
-    save_path=out_dir
+    save_path=outdir
 
     experiment_samples={}
     experiment_samples_cat={}#concatenated samples frome each experiment
@@ -314,7 +312,7 @@ def harmonize(df, features, covariates,batch_var, subject, outdir):
         print(k)
         for i in range(n_results_files):
             print(experiment_paths[k]+str(i))
-            with open(os.path.join(out_dir,'mcmc_{}.pickle'),'rb') as f:
+            with open(os.path.join(outdir,'mcmc_{}.pickle'),'rb') as f:
             # with open(experiment_paths[k]+str(i)+'.pickle', 'rb') as f:
                 print('\tfile',i)
                 mcmc = pd.read_pickle(f)
@@ -419,7 +417,6 @@ def harmonize(df, features, covariates,batch_var, subject, outdir):
 
 def load_harmonized_data(dir):
     """Load harmonized data. note: infer and harmonized must be run before this
-
     Arguments:
         dir: directory where harmonized samples are
     """
