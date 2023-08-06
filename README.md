@@ -23,7 +23,7 @@ pip install BayesComBat
 
 # Usage
 
-There are three functions used to harmonize data with BayesComBat. First, `infer` performs the Bayesian inference and saves MCMC objects in outdir. This is the longest step. The inference+save samples should be divided into iterations using `num_iterations` to prevent memory errors from saving large sample files.
+There are three functions used to harmonize data with BayesComBat. First, `infer` performs the Bayesian inference and saves MCMC objects in outdir. This is the longest step. The inference+save samples steps should be divided into iterations using `num_iterations` to prevent memory errors from saving large sample files.
 
 ```python
 from BayesComBat import hamonize
