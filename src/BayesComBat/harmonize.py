@@ -152,8 +152,8 @@ def infer(df, features, covariates, batch_var, subject_var, outdir):
     rng_key, rng_key_ = random.split(rng_key)
 
     #10,000 samples but do 1000 x 10
-    # num_warmup, num_samples, n_iterations, warmup_thinning = 4000, 1000, 10, 10
-    num_warmup, num_samples, n_iterations, warmup_thinning = 400, 100, 10, 10
+    num_warmup, num_samples, n_iterations, warmup_thinning = 4000, 1000, 10, 10
+    print()
 
     # Run NUTS.
     kernel = NUTS(reparam_model)
