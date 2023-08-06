@@ -19,6 +19,80 @@ print('jax', jax.__version__)
 print('devices', jax.devices())
 
 
+def model(X_df, i, j, 
+            unique_i,unique_j,i_counts,v_count,x_count,j_count,i_count,feature_zeros,feature_ones,feature_0_5,
+            y_df=None):
+
+    ## to add: 
+
+    # print('doing a pass through the model')
+    ###added for predictive
+    j_num = [np.argwhere(unique_j == j.iloc[o])[0][0] for o in range(j.shape[0])] #unque subj num for each image
+    i_num = [np.argwhere(unique_i == i.iloc[o])[0][0] for o in range(i.shape[0])] #unique scanner num for each image
+    if y_df is not None:
+        y = jnp.array(y_df.values)
+    else:
+        y=None
+    X = jnp.array(X_df.values)
+    ###
+
+    alphas = numpyro.sample('alphas', dist.Independent(dist.Cauchy(feature_zeros, (feature_0_5)), 1))
+
+    betas = numpyro.sample('betas', dist.ImproperUniform(constraints.real, (), (v_count, x_count)))
+
+    rho = numpyro.sample('rho', dist.Independent(dist.InverseGamma(jnp.ones((v_count,))*6, jnp.ones((v_count,))*5), 1))
+
+    with numpyro.plate("eta_plate", j_count):
+        etas=numpyro.sample('etas', dist.Independent(dist.Normal(0,rho), 1))
+
+    #fixed
+    with numpyro.plate('gamma_high_level',i_count):
+        gamma_i = numpyro.sample('gamma_i',dist.Cauchy(0,0.1))
+        tau_i = numpyro.sample('tau_i', dist.InverseGamma(2,0.5))
+        with numpyro.plate('gamma_plate', v_count):
+            gammas_0 = numpyro.sample('gammas_0', dist.Normal(gamma_i, tau_i)) #gammas before transform
+    gammas_0=gammas_0.T
+
+
+    #fixed
+    with numpyro.plate('delta_high_level', i_count):
+        m_i=numpyro.sample('m_i', dist.Gamma(50,50)) #scanner-level scale
+        s_i=numpyro.sample('s_i', dist.Gamma(50,1)) #scanner-level shape
+        with numpyro.plate('delta_low_level', v_count):
+            deltas_0_raw = numpyro.sample('deltas_0_raw', dist.Gamma(s_i,s_i))
+            deltas_0 = numpyro.deterministic('deltas_0', deltas_0_raw*m_i) #deltas before transform
+
+
+    #sigma_v
+    sigmas_0 = numpyro.sample('sigmas_0', dist.Independent(dist.HalfCauchy(jnp.ones(v_count)*0.2),1))
+    sigmas_0 = jnp.expand_dims(sigmas_0, 1)
+
+    #new: get sigmas2 and deltas2 for transform
+    sigmas2_0=numpyro.deterministic('sigmas2_0', sigmas_0**2)
+    deltas2_0=numpyro.deterministic('deltas2_0', deltas_0**2)
+
+
+    s = jnp.ones(len(unique_i)).reshape(-1,1)
+    c = ((-jnp.matmul(i_counts.T, gammas_0))/(jnp.matmul(i_counts.T,s))).T
+    gammas = numpyro.deterministic('gammas', gammas_0 + jnp.matmul(s,c.T))
+    
+
+    n=i_counts/(i_counts.sum())
+    s=jnp.ones((i_count,1)) #vector of ones for transform
+    sigmas2 = numpyro.deterministic('sigmas2',(jnp.matmul(deltas2_0,n)*jnp.matmul((jnp.matmul(sigmas2_0,s.T)),n))/(jnp.matmul(s.T,n))) 
+    deltas2 = numpyro.deterministic('deltas2',((deltas2_0*jnp.matmul(sigmas2_0,s.T))/(jnp.matmul(jnp.matmul(deltas2_0,n)*jnp.matmul(sigmas2_0,jnp.matmul(s.T,n))/jnp.matmul(s.T,n),s.T))).T)
+
+    sigmas = numpyro.deterministic('sigmas', jnp.sqrt(sigmas2))
+    deltas = numpyro.deterministic('deltas', jnp.sqrt(deltas2))
+
+    
+
+    mu = alphas + jnp.matmul(X, betas.T) + etas[j_num,] + gammas[i_num,]
+
+    with numpyro.plate('observations_plate', X.shape[0], dim=-2):
+        numpyro.sample('obs', dist.Normal(mu, deltas[i_num,]*jnp.tile(sigmas,(1,y.shape[0])).T), obs = y)
+
+
 def infer(df, features, covariates, batch_var, subject_var, outdir):
     """Learns the ComBat model
     Arguments:
@@ -67,76 +141,6 @@ def infer(df, features, covariates, batch_var, subject_var, outdir):
     i_num = [np.argwhere(unique_i == df[batch_var][o])[0][0] for o in range(df.shape[0])] #unique scanner num for each image
 
         
-    def model(X_df, i, j, y_df=None):
-
-        ###added for predictive
-        j_num = [np.argwhere(unique_j == j.iloc[o])[0][0] for o in range(j.shape[0])] #unque subj num for each image
-        i_num = [np.argwhere(unique_i == i.iloc[o])[0][0] for o in range(i.shape[0])] #unique scanner num for each image
-        if y_df is not None:
-            y = jnp.array(y_df.values)
-        else:
-            y=None
-        X = jnp.array(X_df.values)
-        ###
-
-        alphas = numpyro.sample('alphas', dist.Independent(dist.Cauchy(feature_zeros, (feature_0_5)), 1))
-
-        betas = numpyro.sample('betas', dist.ImproperUniform(constraints.real, (), (v_count, x_count)))
-
-        rho = numpyro.sample('rho', dist.Independent(dist.InverseGamma(jnp.ones((v_count,))*6, jnp.ones((v_count,))*5), 1))
-
-        with numpyro.plate("eta_plate", j_count):
-            etas=numpyro.sample('etas', dist.Independent(dist.Normal(0,rho), 1))
-
-        #fixed
-        with numpyro.plate('gamma_high_level',i_count):
-            gamma_i = numpyro.sample('gamma_i',dist.Cauchy(0,0.1))
-            tau_i = numpyro.sample('tau_i', dist.InverseGamma(2,0.5))
-            with numpyro.plate('gamma_plate', v_count):
-                gammas_0 = numpyro.sample('gammas_0', dist.Normal(gamma_i, tau_i)) #gammas before transform
-        gammas_0=gammas_0.T
-
-
-        #fixed
-        with numpyro.plate('delta_high_level', i_count):
-            m_i=numpyro.sample('m_i', dist.Gamma(50,50)) #scanner-level scale
-            s_i=numpyro.sample('s_i', dist.Gamma(50,1)) #scanner-level shape
-            with numpyro.plate('delta_low_level', v_count):
-                deltas_0_raw = numpyro.sample('deltas_0_raw', dist.Gamma(s_i,s_i))
-                deltas_0 = numpyro.deterministic('deltas_0', deltas_0_raw*m_i) #deltas before transform
-
-
-        #sigma_v
-        sigmas_0 = numpyro.sample('sigmas_0', dist.Independent(dist.HalfCauchy(jnp.ones(v_count)*0.2),1))
-        sigmas_0 = jnp.expand_dims(sigmas_0, 1)
-
-        #new: get sigmas2 and deltas2 for transform
-        sigmas2_0=numpyro.deterministic('sigmas2_0', sigmas_0**2)
-        deltas2_0=numpyro.deterministic('deltas2_0', deltas_0**2)
-
-
-        s = jnp.ones(len(unique_i)).reshape(-1,1)
-        c = ((-jnp.matmul(i_counts.T, gammas_0))/(jnp.matmul(i_counts.T,s))).T
-        gammas = numpyro.deterministic('gammas', gammas_0 + jnp.matmul(s,c.T))
-        
-        # pdb.set_trace()                  
-
-        n=i_counts/(i_counts.sum())
-        s=jnp.ones((i_count,1)) #vector of ones for transform
-        # pdb.set_trace()
-        sigmas2 = numpyro.deterministic('sigmas2',(jnp.matmul(deltas2_0,n)*jnp.matmul((jnp.matmul(sigmas2_0,s.T)),n))/(jnp.matmul(s.T,n))) 
-        deltas2 = numpyro.deterministic('deltas2',((deltas2_0*jnp.matmul(sigmas2_0,s.T))/(jnp.matmul(jnp.matmul(deltas2_0,n)*jnp.matmul(sigmas2_0,jnp.matmul(s.T,n))/jnp.matmul(s.T,n),s.T))).T)
-
-        sigmas = numpyro.deterministic('sigmas', jnp.sqrt(sigmas2))
-        deltas = numpyro.deterministic('deltas', jnp.sqrt(deltas2))
-
-        # pdb.set_trace()
-        
-
-        mu = alphas + jnp.matmul(X, betas.T) + etas[j_num,] + gammas[i_num,]
-
-        with numpyro.plate('observations_plate', X.shape[0], dim=-2):
-            numpyro.sample('obs', dist.Normal(mu, deltas[i_num,]*jnp.tile(sigmas,(1,y.shape[0])).T), obs = y)
             
 
     reparam_model = reparam(model, config={"etas": LocScaleReparam(0),
@@ -148,20 +152,25 @@ def infer(df, features, covariates, batch_var, subject_var, outdir):
     rng_key, rng_key_ = random.split(rng_key)
 
     #10,000 samples but do 1000 x 10
-    num_warmup, num_samples, n_iterations, warmup_thinning = 4000, 1000, 10, 10
+    # num_warmup, num_samples, n_iterations, warmup_thinning = 4000, 1000, 10, 10
+    num_warmup, num_samples, n_iterations, warmup_thinning = 400, 100, 10, 10
 
     # Run NUTS.
     kernel = NUTS(reparam_model)
     num_chains = 4
     mcmc = MCMC(kernel, num_warmup = num_warmup, num_samples = num_samples, num_chains = num_chains, thinning=warmup_thinning)
-    mcmc.warmup(rng_key_, X_df = df[covariates], i = df[batch_var], j = df[subject_var], y_df = df[features], collect_warmup=True)
+    mcmc.warmup(rng_key_, X_df = df[covariates], i = df[batch_var], j = df[subject_var], 
+                unique_i=unique_i,unique_j=unique_j,i_counts=i_counts,v_count=v_count,x_count=x_count,j_count=j_count,i_count=i_count,feature_zeros=feature_zeros,feature_ones=feature_ones,feature_0_5=feature_0_5,
+                y_df = df[features], collect_warmup=True)
     # warmup_samples=mcmc.get_samples(group_by_chain=True)
 
     with open(os.path.join(outdir,"mcmc_warmup.pickle"),"wb") as f:
         pickle.dump(mcmc, f, protocol = 4)
 
     mcmc.thinning=1
-    mcmc.run(rng_key_, X_df = df[covariates], i = df[batch_var], j = df[subject_var], y_df = df[features])
+    mcmc.run(rng_key_, X_df = df[covariates], i = df[batch_var], j = df[subject_var], 
+             unique_i=unique_i,unique_j=unique_j,i_counts=i_counts,v_count=v_count,x_count=x_count,j_count=j_count,i_count=i_count,feature_zeros=feature_zeros,feature_ones=feature_ones,feature_0_5=feature_0_5,
+             y_df = df[features])
 
     try:
         with open(os.path.join(outdir, 'mcmc_{}.pickle'.format("0")),"wb") as f:
@@ -171,7 +180,9 @@ def infer(df, features, covariates, batch_var, subject_var, outdir):
 
     for i in range(1,n_iterations):
         mcmc.post_warmup_state = mcmc.last_state
-        mcmc.run(mcmc.post_warmup_state.rng_key, X_df = df[covariates], i = df[batch_var], j = df[subject_var], y_df = df[features])
+        mcmc.run(mcmc.post_warmup_state.rng_key, X_df = df[covariates], i = df[batch_var], j = df[subject_var], 
+                 unique_i=unique_i,unique_j=unique_j,i_counts=i_counts,v_count=v_count,x_count=x_count,j_count=j_count,i_count=i_count,feature_zeros=feature_zeros,feature_ones=feature_ones,feature_0_5=feature_0_5,
+                 y_df = df[features])
         try:
             with open(os.path.join(outdir, 'mcmc_{}.pickle'.format(i)),"wb") as f:
                 pickle.dump(mcmc, f, protocol = 4)
@@ -233,62 +244,7 @@ def harmonize(df, features, covariates,batch_var, subject_var, outdir):
 
 
     print('Defining model')
-    def model(X_df, i, j, y_df):
-        
-        y = jnp.array(y_df.values)
-        X = jnp.array(X_df.values)
-        
-
-        alphas = numpyro.sample('alphas', dist.Independent(dist.Cauchy(feature_zeros, (feature_0_5)), 1))
-
-        betas = numpyro.sample('betas', dist.ImproperUniform(constraints.real, (), (v_count, x_count)))
-
-        #118 * 1
-        rho = numpyro.sample('rho', dist.Independent(dist.InverseGamma(jnp.ones((v_count,))*6, jnp.ones((v_count,))*5), 1))
-
-        with numpyro.plate("eta_plate", j_count):
-            etas=numpyro.sample('etas', dist.Independent(dist.Normal(0,rho), 1))
-
-        #fixed
-        with numpyro.plate('gamma_high_level',i_count):
-            gamma_i = numpyro.sample('gamma_i',dist.Cauchy(0,0.1))
-            tau_i = numpyro.sample('tau_i', dist.InverseGamma(2,0.5))
-            with numpyro.plate('gamma_plate', v_count):
-                gammas_0 = numpyro.sample('gammas_0', dist.Normal(gamma_i, tau_i))
-        gammas_0=gammas_0.T
-
-
-        #fixed
-        with numpyro.plate('delta_high_level', i_count):
-            m_i=numpyro.sample('m_i', dist.Gamma(50,50)) #scanner-level scale
-            s_i=numpyro.sample('s_i', dist.Gamma(50,1)) #scanner-level shape
-            with numpyro.plate('delta_low_level', v_count):
-                deltas_0_raw = numpyro.sample('deltas_0_raw', dist.Gamma(s_i,s_i))
-                deltas_0 = numpyro.deterministic('deltas_0', deltas_0_raw*m_i)
-
-
-        #sigma_v
-        sigmas_0 = numpyro.sample('sigmas_0', dist.Independent(dist.HalfCauchy(jnp.ones(v_count)*0.2),1))
-        sigmas_0 = jnp.expand_dims(sigmas_0, 1)
-
-        #new: get sigmas2 and deltas2 for transform
-        sigmas2_0=numpyro.deterministic('sigmas2_0', sigmas_0**2)
-        deltas2_0=numpyro.deterministic('deltas2_0', deltas_0**2)
-
-
-        s = jnp.ones(len(unique_i)).reshape(-1,1)
-        c = ((-jnp.matmul(i_counts.T, gammas_0))/(jnp.matmul(i_counts.T,s))).T
-        gammas = numpyro.deterministic('gammas', gammas_0 + jnp.matmul(s,c.T))
-        n=i_counts/(i_counts.sum())
-        s=jnp.ones((i_count,1)) #vector of ones for transform
-        sigmas2 = numpyro.deterministic('sigmas2',(jnp.matmul(deltas2_0,n)*jnp.matmul((jnp.matmul(sigmas2_0,s.T)),n))/(jnp.matmul(s.T,n))) 
-        deltas2 = numpyro.deterministic('deltas2',((deltas2_0*jnp.matmul(sigmas2_0,s.T))/(jnp.matmul(jnp.matmul(deltas2_0,n)*jnp.matmul(sigmas2_0,jnp.matmul(s.T,n))/jnp.matmul(s.T,n),s.T))).T)
-        sigmas = numpyro.deterministic('sigmas', jnp.sqrt(sigmas2))
-        deltas = numpyro.deterministic('deltas', jnp.sqrt(deltas2))
-        mu = alphas + jnp.matmul(X, betas.T) + etas[j_num,] + gammas[i_num,]
-
-        with numpyro.plate('observations_plate', X.shape[0], dim=-2):
-            numpyro.sample('obs', dist.Normal(mu, deltas[i_num,]*jnp.tile(sigmas,(1,y.shape[0])).T), obs = y)
+            
     reparam_model = reparam(model, config={"etas": LocScaleReparam(0),
     "gammas_0":LocScaleReparam(0)})
 
@@ -296,32 +252,31 @@ def harmonize(df, features, covariates,batch_var, subject_var, outdir):
 
     n_results_files=10
 
-    # experiment_paths={
-    #     'current':'/jet/home/mare398/Pyro_Long_Combat/pickles/06_07_yt_ib_nd_ns_save_warmup_'}
-    # save_path="/jet/home/mare398/Pyro_Long_Combat/evalfiles/06_07_yt_ib_nd_ns_save_warmup/"
 
     experiment_paths={
         'current':outdir}
     save_path=outdir
 
     experiment_samples={}
-    experiment_samples_cat={}#concatenated samples frome each experiment
+    experiment_samples_cat={} #concatenated samples frome each experiment
     for k in experiment_paths.keys():
         experiment_samples[k]=[]
     for k in experiment_paths:
         print(k)
         for i in range(n_results_files):
             print(experiment_paths[k]+str(i))
-            with open(os.path.join(outdir,'mcmc_{}.pickle'),'rb') as f:
+            # with open(os.path.join(outdir,'mcmc_{}.pickle'),'rb') as f:
+            with open(os.path.join(outdir,'mcmc_{}.pickle'.format(i)),'rb') as f:
             # with open(experiment_paths[k]+str(i)+'.pickle', 'rb') as f:
                 print('\tfile',i)
                 mcmc = pd.read_pickle(f)
-                # pdb.set_trace()
                 experiment_samples[k].append(mcmc.get_samples())
                 a_shape=experiment_samples['current'][i]['alphas'].shape
                 alphas=experiment_samples['current'][i]['alphas']*y_stds.tile((a_shape[0],1))+y_means.tile((a_shape[0],1))
+
                 b_shape=experiment_samples['current'][i]['betas'].shape
-                betas=experiment_samples['current'][i]['betas']*jnp.repeat(jnp.expand_dims(y_stds.tile((b_shape[0],1)),2),6,2)#+jnp.repeat(jnp.expand_dims(y_means.tile((b_shape[0],b_shape[1],1)),3),6,3)
+                # betas=experiment_samples['current'][i]['betas']*jnp.repeat(jnp.expand_dims(y_stds.tile((b_shape[0],1)),2),6,2)#+jnp.repeat(jnp.expand_dims(y_means.tile((b_shape[0],b_shape[1],1)),3),6,3)
+                betas=experiment_samples['current'][i]['betas']*jnp.repeat(jnp.expand_dims(y_stds.tile((b_shape[0],1)),2),x_count,2)
                 g_shape=experiment_samples['current'][i]['gammas'].shape
                 gammas=experiment_samples['current'][i]['gammas']*y_stds.tile((g_shape[0],g_shape[1],1))#+y_means.tile((g_shape[0],g_shape[1],g_shape[2],1))
                 d_shape=experiment_samples['current'][i]['deltas'].shape
@@ -406,7 +361,6 @@ def harmonize(df, features, covariates,batch_var, subject_var, outdir):
                         pickle.dump(b_x_prod, f, protocol = 4)
                 except:
                     print('couldnt write mcmc object')
-                # pdb.set_trace()
                 y_ijv_combat = (y_ijv-a_v-b_x_prod-h_jv-g_iv)/(d_iv)+a_v+b_x_prod+h_jv
                 try:
                     with open(os.path.join(save_path,"y_ijv_harmonized_{}.pickle".format(i)), "wb") as f:
@@ -425,7 +379,7 @@ def load_harmonized_data(dir):
     y_ijv_combat = None
     for p in range(num_pickles):
         print("Loading pickle #",p, end=" ")
-        with open(os.path.join(dir,"y_ijv_combat_{}.pickle".format(p)),"rb") as f:
+        with open(os.path.join(dir,"y_ijv_harmonized_{}.pickle".format(p)),"rb") as f:
             y_ijv_combat_p=pickle.load(f)
             if y_ijv_combat is None:
                 y_ijv_combat=y_ijv_combat_p
