@@ -63,7 +63,7 @@ outdir='/path/to/output/directory',
 num_iterations=10)
 ```
 
-Finally, `load_harmonized_data` will load an array of size (num_samples,num_images,num_features) with the harmonized data. Note that num_sampples is num_chains*num_iterations*num_samples_per_iteration.
+Finally, `load_harmonized_data` will load an array of size (num_samples,num_images,num_features) with the harmonized data. Note that num_sampples is num_chains * num_iterations * num_samples_per_iteration.
 
 ```python
 harmonized_data = harmonize.load_harmonized_data(
