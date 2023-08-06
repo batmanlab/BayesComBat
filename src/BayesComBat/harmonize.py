@@ -19,13 +19,11 @@ print('jax', jax.__version__)
 print('devices', jax.devices())
 
 
-def model(X_df, i, j, 
+def model_(X_df, i, j, 
             unique_i,unique_j,i_counts,v_count,x_count,j_count,i_count,feature_zeros,feature_ones,feature_0_5,
             y_df=None):
 
-    ## to add: 
 
-    # print('doing a pass through the model')
     ###added for predictive
     j_num = [np.argwhere(unique_j == j.iloc[o])[0][0] for o in range(j.shape[0])] #unque subj num for each image
     i_num = [np.argwhere(unique_i == i.iloc[o])[0][0] for o in range(i.shape[0])] #unique scanner num for each image
@@ -93,16 +91,22 @@ def model(X_df, i, j,
         numpyro.sample('obs', dist.Normal(mu, deltas[i_num,]*jnp.tile(sigmas,(1,y.shape[0])).T), obs = y)
 
 
-def infer(df, features, covariates, batch_var, subject_var, outdir):
+def infer(data, features, covariates, batch_var, subject_var, outdir,
+          num_warmup=4000, num_samples_per_iteration=1000, num_iterations=10, num_chains=4):
     """Learns the ComBat model
     Arguments:
-        df: pandas dataframe with all data (unharmonized imaging features, covariates, scanner indicators)
+        data: pandas dataframe with all data (unharmonized imaging features, covariates, scanner indicators)
         features: list of feature names corresponding to df columns
         covariates: list of covariates corresponding to df columns. If categorical (i.e. Male/Female), please convert to int or float first
         batch_var: string column name corresponding to the scanner/site to harmonize
         subject: string column name corresponding to the subject identifier
         outdir: directory to save pickle files to
+        num_warmup: number of warmup samples
+        num_samples_per_iteration: number of samples per iteration. i.e. if num_iterations=10, and num_samples_per_iteration=1000, then 10,000 samples will be drawn for each chain
+        num_iterations: number of iterations
+        num_chains: number of chains
     """
+    df=data
     numpyro.enable_x64()
 
     if not os.path.exists(outdir):
@@ -112,9 +116,6 @@ def infer(df, features, covariates, batch_var, subject_var, outdir):
     #normalize features
     for f in features:
         df[f]=(df[f] - df[f].mean()) / (df[f].std()) 
-
-    # batch_var = 'Scanner_Proxy'
-    # covariates = ['Age','Male','MCI','AD','Age*MCI','Age*AD']
     
     V = len(features)
     print(V, 'features')
@@ -143,7 +144,7 @@ def infer(df, features, covariates, batch_var, subject_var, outdir):
         
             
 
-    reparam_model = reparam(model, config={"etas": LocScaleReparam(0),
+    reparam_model = reparam(model_, config={"etas": LocScaleReparam(0),
     "gammas_0":LocScaleReparam(0)})
 
     #Numpyro With MCMC
@@ -152,13 +153,15 @@ def infer(df, features, covariates, batch_var, subject_var, outdir):
     rng_key, rng_key_ = random.split(rng_key)
 
     #10,000 samples but do 1000 x 10
-    num_warmup, num_samples, n_iterations, warmup_thinning = 4000, 1000, 10, 10
+    # num_warmup, num_samples, num_iterations, warmup_thinning = 4000, 1000, 10, 10
+    
+    warmup_thinning=10
     print()
 
     # Run NUTS.
     kernel = NUTS(reparam_model)
-    num_chains = 4
-    mcmc = MCMC(kernel, num_warmup = num_warmup, num_samples = num_samples, num_chains = num_chains, thinning=warmup_thinning)
+    # num_chains = 4
+    mcmc = MCMC(kernel, num_warmup = num_warmup, num_samples = num_samples_per_iteration, num_chains = num_chains, thinning=warmup_thinning)
     mcmc.warmup(rng_key_, X_df = df[covariates], i = df[batch_var], j = df[subject_var], 
                 unique_i=unique_i,unique_j=unique_j,i_counts=i_counts,v_count=v_count,x_count=x_count,j_count=j_count,i_count=i_count,feature_zeros=feature_zeros,feature_ones=feature_ones,feature_0_5=feature_0_5,
                 y_df = df[features], collect_warmup=True)
@@ -178,7 +181,7 @@ def infer(df, features, covariates, batch_var, subject_var, outdir):
     except:
         print('couldnt write mcmc object')
 
-    for i in range(1,n_iterations):
+    for i in range(1,num_iterations):
         mcmc.post_warmup_state = mcmc.last_state
         mcmc.run(mcmc.post_warmup_state.rng_key, X_df = df[covariates], i = df[batch_var], j = df[subject_var], 
                  unique_i=unique_i,unique_j=unique_j,i_counts=i_counts,v_count=v_count,x_count=x_count,j_count=j_count,i_count=i_count,feature_zeros=feature_zeros,feature_ones=feature_ones,feature_0_5=feature_0_5,
@@ -194,7 +197,7 @@ def infer(df, features, covariates, batch_var, subject_var, outdir):
 
 
 
-def harmonize(df, features, covariates,batch_var, subject_var, outdir):
+def harmonize(data, features, covariates,batch_var, subject_var, outdir, num_iterations=10):
     """ Does haronization using pickle files created by infer
     Arguments:
         df: pandas dataframe with all data (unharmonized imaging features, covariates, scanner indicators).
@@ -203,9 +206,10 @@ def harmonize(df, features, covariates,batch_var, subject_var, outdir):
         batch_var: string column name corresponding to the scanner/site to harmonize
         subject_var: string column name corresponding to the subject identifier
         outdir: directory to save pickle files to
+        num_iterations: number of iterations to load (should correspond to num_iterations from infer)
     """
 
-
+    df=data
     df_unscaled=df.copy()
     #######
     for f in features:
@@ -245,12 +249,10 @@ def harmonize(df, features, covariates,batch_var, subject_var, outdir):
 
     print('Defining model')
             
-    reparam_model = reparam(model, config={"etas": LocScaleReparam(0),
+    reparam_model = reparam(model_, config={"etas": LocScaleReparam(0),
     "gammas_0":LocScaleReparam(0)})
 
 
-
-    n_results_files=10
 
 
     experiment_paths={
@@ -263,7 +265,7 @@ def harmonize(df, features, covariates,batch_var, subject_var, outdir):
         experiment_samples[k]=[]
     for k in experiment_paths:
         print(k)
-        for i in range(n_results_files):
+        for i in range(num_iterations):
             print(experiment_paths[k]+str(i))
             # with open(os.path.join(outdir,'mcmc_{}.pickle'),'rb') as f:
             with open(os.path.join(outdir,'mcmc_{}.pickle'.format(i)),'rb') as f:
@@ -369,15 +371,15 @@ def harmonize(df, features, covariates,batch_var, subject_var, outdir):
                     print('couldnt write mcmc object')
 
 
-def load_harmonized_data(dir):
+def load_harmonized_data(dir, num_iterations=10):
     """Load harmonized data. note: infer and harmonized must be run before this
     Arguments:
         dir: directory where harmonized samples are
+        num_iterations: number of iterations to load
     """
 
-    num_pickles=10
     y_ijv_combat = None
-    for p in range(num_pickles):
+    for p in range(num_iterations):
         print("Loading pickle #",p, end=" ")
         with open(os.path.join(dir,"y_ijv_harmonized_{}.pickle".format(p)),"rb") as f:
             y_ijv_combat_p=pickle.load(f)
