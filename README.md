@@ -1,11 +1,11 @@
 # Repository for Fully Bayesian ComBat
 
-This is the home of Fully Bayesian Combat, an extension of [Longitudinal ComBat](https://github.com/jcbeer/longCombat) which uses fully Bayesian inference rather than empirical Bayes.
+This is the home of Fully Bayesian Combat, an extension of [Longitudinal ComBat](https://github.com/jcbeer/longCombat), which uses fully Bayesian inference rather than empirical Bayes.
 
-See the corresponding paper [here](https://doi.org/10.1016/j.nicl.2023.103472).
+See our corresponding paper [here](https://doi.org/10.1016/j.nicl.2023.103472).
 
 # What is BayesComBat?
-BayesComBat is a fully Bayesian implementation of ComBat, a model often used for harmonization of brain imaging features (e.g. cortical thickness) from across multiple sites. ComBat models and removes scanner effects from the data.  
+BayesComBat is a fully Bayesian implementation of ComBat, a model often used for harmonization of brain imaging features (e.g. cortical thickness) from across multiple sites. ComBat models and removes scanner effects from the data using a hierarchical Bayesian model. BayesComBat relies on [NumPyro](https://github.com/pyro-ppl/numpyro) (and [Jax](https://github.com/google/jax/)) for MCMC sampling.
 
 
 # Installation
