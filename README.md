@@ -71,6 +71,8 @@ harmonized_data = harmonize.load_harmonized_data(
     num_iterations=10)
 ```
 
+Note: for GPU-accelerated inference, Jax GPU Version should be installed separately (See [here](https://github.com/google/jax#installation)).
+
 
 
 
